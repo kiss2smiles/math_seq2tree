@@ -269,14 +269,15 @@ class Prediction(nn.Module):
         current_embeddings = []
         for st in node_stacks:
             if len(st) == 0:
-                current_embeddings.append(padding_hidden)
+                current_embeddings.append(padding_hidden)  # 初始时为全0向量
             else:
                 current_node = st[-1]
-                current_embeddings.append(current_node.embedding)
+                current_embeddings.append(current_node.embedding)  # [1, 512]
 
         current_node_temp = []
         for l, c in zip(left_childs, current_embeddings):
             if l is None:  # left sub-tree embedding is None, generate left child node
+                # 在初始化根节点时，h_l为h_{s}^{p}，即Encoder的hidden state输出
                 c = self.dropout(c)                   # h_l
                 g = torch.tanh(self.concat_l(c))      # Q_{le}
                 t = torch.sigmoid(self.concat_lg(c))  # g_l

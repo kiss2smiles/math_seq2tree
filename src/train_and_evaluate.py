@@ -765,7 +765,7 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
 
     # embedding_stacks: token_embedding
     embeddings_stacks = [[]   for _ in range(batch_size)]
-    left_childs       = [None for _ in range(batch_size)]
+    left_childs       = [None for _ in range(batch_size)]  # debug: 如何理解这里的left_childs
     for t in range(max_target_length):
         # node_stacks:              [batch_size]
         # left_childs:              [batch_size]
@@ -826,7 +826,7 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
         # right_child: h_r    = [batch_size, hidden_size]
         # node_label:  e(y|P) = [batch_size, embedding_size]
 
-        left_childs = []  # left_childs如何执行
+        left_childs = []  # debug: left_childs如何执行
         for idx, l, r, node_stack, i, o in zip(range(batch_size),
                                                left_child.split(1),
                                                right_child.split(1),
