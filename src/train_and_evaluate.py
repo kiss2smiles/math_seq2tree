@@ -200,15 +200,18 @@ def generate_post_tree_seq_rule_mask(decoder_input, nums_batch, word2index, batc
 
 def generate_tree_input(target, decoder_output, nums_stack_batch, num_start, unk):
     # when the decoder input is copied num but the num has two pos, chose the max
-    target_input = copy.deepcopy(target)
+    # predict token: y = argmax prob(yjq; c; P)
+
+    # decoder_output: [batch_size, (num_size + constant_size + operator_size)]
+    target_input = copy.deepcopy(target)  # [batch_size]
     for i in range(len(target)):
         if target[i] == unk:
             num_stack = nums_stack_batch[i].pop()
             max_score = -float("1e12")
             for num in num_stack:
                 if decoder_output[i, num_start + num] > max_score:
-                    target[i] = num + num_start
-                    max_score = decoder_output[i, num_start + num]
+                    target[i] = num + num_start  # token_index
+                    max_score = decoder_output[i, num_start + num]  # token_score
         if target_input[i] >= num_start:
             target_input[i] = 0
     return torch.LongTensor(target), torch.LongTensor(target_input)
@@ -728,9 +731,9 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
 
     # input_var:    [seq_len, batch_size] Tensor
     # input_length: [batch_size] list
-    encoder_outputs, problem_output = encoder(input_var, input_length)
+    encoder_outputs, problem_output = encoder(input_seqs=input_var, input_lengths=input_length)
     # encoder_outputs: [seq_len, batch_size, hidden_size]
-    # problem_output:  [batch_size, hidden_size]
+    # problem_output:  [         batch_size, hidden_size]
 
     # Prepare input and output variables
 
@@ -748,14 +751,13 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
     num_size     = max(copy_num_len)  # num_size
 
     # pad token hidden_size填充为0
-    # 从原始文本中指定索引的位置取出number embedding matrix
+    # 从原始文本中指定索引的位置取出 number embedding matrix
     # NUMBER EMBEDDING MATRIX: e(y|P) = M_{num}
-    all_nums_encoder_outputs = get_all_number_encoder_outputs(
-        encoder_outputs=encoder_outputs,
-        num_pos=num_pos,
-        batch_size=batch_size,
-        num_size=num_size,
-        hidden_size=encoder.hidden_size)
+    all_nums_encoder_outputs = get_all_number_encoder_outputs(encoder_outputs=encoder_outputs,
+                                                              num_pos=num_pos,
+                                                              batch_size=batch_size,
+                                                              num_size=num_size,
+                                                              hidden_size=encoder.hidden_size)
     # all_nums_encoder_outputs: [batch_size, num_size, hidden_size]
 
     num_start = output_lang.num_start
@@ -794,11 +796,17 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
 
         # all_leafs.append(p_leaf)
         outputs = torch.cat((op, num_score), 1)
+        # outputs: s(y|q; c; P)
         # outputs: [batch_size, (num_size + constant_size + operator_size)]
 
         all_node_outputs.append(outputs)  # prediction
-
-        target_t, generate_input = generate_tree_input(target[t].tolist(), outputs, nums_stack_batch, num_start, unk)
+        target_t, generate_input = generate_tree_input(target=target[t].tolist(),
+                                                       decoder_output=outputs,
+                                                       nums_stack_batch=nums_stack_batch,
+                                                       num_start=num_start,
+                                                       unk=unk)
+        # target_t:       target token index = The token with the highest probability
+        # generate_input: target token index = The token with the highest probability
         # target_t:        [batch_size]
         # generate_input:  [batch_size]
         target[t] = target_t  # ground truth
@@ -808,12 +816,17 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
         # current_embeddings: goal vector q
         # generate_input:     token embedding e(y|p)
         # current_context:    context vector c
-        left_child, right_child, node_label = generate(current_embeddings, generate_input, current_context)
+        # current_embeddings: [batch_size, 1, hidden_size]
+        # generate_input:     [batch_size]
+        # current_context:    [batch_size, 1, hidden_size]
+        left_child, right_child, node_label = generate(node_embedding=current_embeddings,
+                                                       node_label=generate_input,
+                                                       current_context=current_context)
         # left_child:  h_l    = [batch_size, hidden_size]
         # right_child: h_r    = [batch_size, hidden_size]
         # node_label:  e(y|P) = [batch_size, embedding_size]
 
-        left_childs = []
+        left_childs = []  # left_childs如何执行
         for idx, l, r, node_stack, i, o in zip(range(batch_size),
                                                left_child.split(1),
                                                right_child.split(1),
@@ -833,13 +846,14 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
                 # 生成新的左孩子节点
                 node_stack.append(TreeNode(l, left_flag=True))
                 # 更新非叶子节点的Tree embedding
-                # node_label: [1, embedding_size]
                 o.append(TreeEmbedding(node_label[idx].unsqueeze(0), terminal=False))  # terminal=False: 非叶子节点
+                # node_label: [1, embedding_size]
 
             # 生成的token为运算数
             else:
-                # 更新叶子节点的Tree embedding = subTree embedding = e(y|P)
+                # update sub tree embedding = t
                 current_num = current_nums_embeddings[idx, i - num_start].unsqueeze(0)
+
                 # current_num: [1, hidden_size]
                 while len(o) > 0 and o[-1].terminal:
                     sub_stree = o.pop()
@@ -850,10 +864,9 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
                     # current_num:        [1, hidden_size]
 
                     # 如果此时为右孩子节点，则通过左孩子节点和右孩子节点的subtree embedding来更新根节点的subtree embedding
-                    # op.embedding:        node_embedding
-                    # sub_stree.embedding: sub_tree_1
-                    # current_num:         sub_tree_2
-                    current_num = merge(op.embedding, sub_stree.embedding, current_num)
+                    current_num = merge(node_embedding=op.embedding,
+                                        sub_tree_1=sub_stree.embedding,
+                                        sub_tree_2=current_num)
                 # current_num: [1, hidden_size]
                 o.append(TreeEmbedding(current_num, terminal=True))  # terminal=True: 为叶子节点
 
@@ -927,12 +940,11 @@ def evaluate_tree(input_batch, input_length, generate_nums,
     # get num feature matrix M_{num}
     # pad token hidden_size填充为0
     # NUMBER EMBEDDING MATRIX: e(y|P) = M_{num}
-    all_nums_encoder_outputs = get_all_number_encoder_outputs(
-        encoder_outputs=encoder_outputs,
-        num_pos=[num_pos],
-        batch_size=batch_size,
-        num_size=num_size,
-        hidden_size=encoder.hidden_size)
+    all_nums_encoder_outputs = get_all_number_encoder_outputs(encoder_outputs=encoder_outputs,
+                                                              num_pos=[num_pos],
+                                                              batch_size=batch_size,
+                                                              num_size=num_size,
+                                                              hidden_size=encoder.hidden_size)
     # all_nums_encoder_outputs: [batch_size, num_size, hidden_size]
 
     num_start = output_lang.num_start  # num_start: 5

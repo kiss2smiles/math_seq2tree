@@ -115,17 +115,25 @@ class Score(nn.Module):
         self.score = nn.Linear(hidden_size, 1, bias=False)
 
     def forward(self, hidden, num_embeddings, num_mask=None):
+        # hidden:         [batch_size, 1, 2*hidden_size]
+        # num_embeddings: [batch_size, num_size + constant_size, hidden_size]
+        # num_mask:       [batch_size, num_size + constant_size]
         max_len = num_embeddings.size(1)
         repeat_dims = [1] * hidden.dim()
         repeat_dims[1] = max_len
         hidden = hidden.repeat(*repeat_dims)  # B x O x H
+        # hidden: [batch_size, num_size + constant_size, hidden_size]
 
         # For each position of encoder outputs
         this_batch_size = num_embeddings.size(0)
         energy_in = torch.cat((hidden, num_embeddings), 2).view(-1, self.input_size + self.hidden_size)
+        # energy_in: [batch_size, num_size + constant_size, 2*hidden_size]
+
+        # score: s(y|q; c; P)
         score = self.score(torch.tanh(self.attn(energy_in)))  # (B x O) x 1
         score = score.squeeze(1)
         score = score.view(this_batch_size, -1)  # B x O
+        # score: [batch_size, num_size + constant_size]
         if num_mask is not None:
             score = score.masked_fill_(num_mask, -1e12)
         return score
@@ -134,7 +142,7 @@ class Score(nn.Module):
 class TreeAttn(nn.Module):
     def __init__(self, input_size, hidden_size):
         super(TreeAttn, self).__init__()
-        self.input_size = input_size
+        self.input_size  = input_size
         self.hidden_size = hidden_size
         self.attn  = nn.Linear(hidden_size + input_size, hidden_size)
         self.score = nn.Linear(hidden_size, 1)
@@ -159,6 +167,7 @@ class TreeAttn(nn.Module):
         score_feature = torch.tanh(self.attn(energy_in))
         # score_feature: [seq_len * batch_size, 2*hidden_size]
 
+        # attn_energies: score(q, h_{s}^{p})
         attn_energies = self.score(score_feature)  # (S x B) x 1
         # attn_energies: [seq_len * batch_size, 1]
 
@@ -267,24 +276,24 @@ class Prediction(nn.Module):
 
         current_node_temp = []
         for l, c in zip(left_childs, current_embeddings):
-            if l is None:  # left sub-tree embedding is None
-                c = self.dropout(c)                   # context vector c
-                g = torch.tanh(self.concat_l(c))      # goal vector g        = Q_{le}
-                t = torch.sigmoid(self.concat_lg(c))  # token embedding t    = g_l
-                current_node_temp.append(g * t)       # left sub-goal vector = q_l
-            else:
-                ld = self.dropout(l)                                      # sub-tree left tree emb = ld
-                c = self.dropout(c)                                       # context vector c
-                g = torch.tanh(self.concat_r(torch.cat((ld, c), 1)))      # goal vector g         = Q_{re}
-                t = torch.sigmoid(self.concat_rg(torch.cat((ld, c), 1)))  # token embedding t     = g_{r}
-                current_node_temp.append(g * t)                           # right sub-goal vector = q_{r}
+            if l is None:  # left sub-tree embedding is None, generate left child node
+                c = self.dropout(c)                   # h_l
+                g = torch.tanh(self.concat_l(c))      # Q_{le}
+                t = torch.sigmoid(self.concat_lg(c))  # g_l
+                current_node_temp.append(g * t)       # q_l
+            else:  # left sub-tree embedding is not None, generate right child node
+                ld = self.dropout(l)                                      # ld = sub-tree left tree emb
+                c = self.dropout(c)                                       # h_r
+                g = torch.tanh(self.concat_r(torch.cat((ld, c), 1)))      # Q_{re}
+                t = torch.sigmoid(self.concat_rg(torch.cat((ld, c), 1)))  # g_r
+                current_node_temp.append(g * t)                           # q_r
 
         current_node = torch.stack(current_node_temp)
         # current node: goal vector q
         # current_node: [batch_size, 1, hidden_size]
 
         current_embeddings = self.dropout(current_node)
-        # current_embeddings: context vector c
+        # current_embeddings: goal vector q
         # current_embeddings: [batch_size, 1, hidden_size]
 
         # current_embeddings: goal vector q
@@ -296,10 +305,11 @@ class Prediction(nn.Module):
         # current_attn: [batch_size, 1, seq_len]
 
         # CONTEXT VECTOR c: summarizes relevant information of the problem at hand
+        # current_attn:    [batch_size, 1, seq_len]
         # encoder_outputs: [batch_size, seq_len, hidden_size]
         current_context = current_attn.bmm(encoder_outputs.transpose(0, 1))  # B x 1 x N
         # current_context: context vector c
-        # current_context: [batch_size,       1, hidden_size]
+        # current_context: [batch_size, 1, hidden_size]
 
         # the information to get the current quantity
         batch_size = current_embeddings.size(0)
@@ -311,13 +321,13 @@ class Prediction(nn.Module):
 
         # embedding_weight: CONSTANT EMBEDDING MATRIX: e(y|P) = M_{con}
         # embedding_weight: [batch_size, constant_size, hidden_size]
-        # num_pades:        NUMBER EMBEDDING MATRIX: e(y|P) = M_{num}
+        # num_pades:        NUMBER EMBEDDING MATRIX:   e(y|P) = M_{num}
         # num_pades:        [batch_size, num_size, hidden_size]
         embedding_weight = torch.cat((embedding_weight, num_pades), dim=1)  # B x O x N
         # embedding_weight: [batch_size, num_size + constant_size, hidden_size]
 
-        # current_node:    goal vector q
-        # current_context: context vector c
+        # current_node:    root goal    vector q
+        # current_context: root context vector c
         leaf_input = torch.cat((current_node, current_context), 2)
         # leaf_input: [batch_size, 1, 2*hidden_size]
 
@@ -328,9 +338,11 @@ class Prediction(nn.Module):
         # p_leaf = nn.functional.softmax(self.is_leaf(leaf_input), 1)
         # max pooling the embedding_weight
         embedding_weight_ = self.dropout(embedding_weight)
+        # embedding_weight_:  number embedding matrix e(y|P)
         # embedding_weight_: [batch_size, num_size + constant_size, hidden_size]
 
         # leaf_input:        [batch_size, 1, 2*hidden_size]
+        # embedding_weight_: [batch_size, num_size + constant_size, hidden_size]
         # mask_nums:         [batch_size, num_size + constant_size]
         num_score = self.score(leaf_input.unsqueeze(1), embedding_weight_, mask_nums)
         # num_score:         [batch_size, num_size + constant_size]
@@ -348,7 +360,7 @@ class Prediction(nn.Module):
         # current_context:   [batch_size, 1, hidden_size]
         # embedding_weight:  [batch_size, num_size + constant_size, hidden_size]
         return num_score, op, current_node, current_context, embedding_weight
-        # current_node:      goal vector q
+        # current_node:      goal    vector q
         # current_context:   context vector c
         # embedding_weight:  current number + constant embedding matrix
 
@@ -357,8 +369,8 @@ class GenerateNode(nn.Module):
     def __init__(self, hidden_size, op_nums, embedding_size, dropout=0.5):
         super(GenerateNode, self).__init__()
 
-        self.embedding_size = embedding_size
-        self.hidden_size = hidden_size
+        self.embedding_size = embedding_size  # 128
+        self.hidden_size    = hidden_size     # 512
 
         # op_nums: 操作符数量
         self.embeddings = nn.Embedding(op_nums, embedding_size)
@@ -369,7 +381,10 @@ class GenerateNode(nn.Module):
         self.generate_rg = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
 
     def forward(self, node_embedding, node_label, current_context):
-        # node_label:  [batch_size]
+        # node_embedding:  [batch_size, 1, hidden_size]
+        # node_label:      [batch_size]
+        # current_context: [batch_size, 1, hidden_size]
+
         node_label_ = self.embeddings(node_label)
         # node_label_: [batch_size, embedding_size]
         node_label  = self.em_dropout(node_label_)
@@ -379,25 +394,27 @@ class GenerateNode(nn.Module):
         current_context = current_context.squeeze(1)
         node_embedding  = self.em_dropout(node_embedding)
         current_context = self.em_dropout(current_context)
+        # node_embedding:  [batch_size, hidden_size]
+        # current_context: [batch_size, hidden_size]
 
         # left sub-goal generation
-        # node_embedding:  q
-        # current_context: c
-        # node_label:      e(y|P)
+        # node_embedding:  parent goal    vector q
+        # current_context: parent context vector c
+        # node_label:      parent token embedding e(y^|P)
         l_child   = torch.tanh(   self.generate_l( torch.cat((node_embedding, current_context, node_label), 1)))  # C_l
         l_child_g = torch.sigmoid(self.generate_lg(torch.cat((node_embedding, current_context, node_label), 1)))  # o_l
-        l_child = l_child * l_child_g  # h_l
+        l_child   = l_child * l_child_g  # h_l
         # l_child:   C_l
         # l_child_g: o_l
         # l_child:   h_l
 
         # right sub-goal generation
-        # node_embedding:  goal vector q
-        # current_context: context vector c
-        # node_label: e(y|P)
-        r_child   = torch.tanh(self.generate_r(torch.cat((node_embedding, current_context, node_label), 1)))     # C_r
-        r_child_g = torch.sigmoid(self.generate_rg(torch.cat((node_embedding, current_context, node_label), 1))) # o_r
-        r_child = r_child * r_child_g  # h_r
+        # node_embedding:  parent goal    vector q
+        # current_context: parent context vector c
+        # node_label:      parent token embedding e(y^|P)
+        r_child   = torch.tanh(self.generate_r(torch.cat((node_embedding, current_context, node_label), 1)))      # C_r
+        r_child_g = torch.sigmoid(self.generate_rg(torch.cat((node_embedding, current_context, node_label), 1)))  # o_r
+        r_child   = r_child * r_child_g  # h_r
         # r_child:   C_r
         # r_child_g: o_r
         # r_child:   h_r
@@ -409,25 +426,26 @@ class Merge(nn.Module):
     def __init__(self, hidden_size, embedding_size, dropout=0.5):
         super(Merge, self).__init__()
 
-        self.embedding_size = embedding_size
-        self.hidden_size    = hidden_size
+        self.embedding_size = embedding_size # 128
+        self.hidden_size    = hidden_size    # 512
 
         self.em_dropout = nn.Dropout(dropout)
         self.merge   = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
         self.merge_g = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
 
     def forward(self, node_embedding, sub_tree_1, sub_tree_2):
-        # node_embedding: e(y|P)
-        # sub_tree_1: t_{l}
-        # sub_tree_2: t_{r}
-        # node_embedding: [1, embedding_size]
-        # sub_tree_1:     [1, hidden_size]
-        # sub_tree_2:     [1, hidden_size]
+        # sub_tree_1:     t_{l}
+        # sub_tree_2:     t_{r}
+        # node_embedding: e(y^|P)
         sub_tree_1 = self.em_dropout(sub_tree_1)
         sub_tree_2 = self.em_dropout(sub_tree_2)
         node_embedding = self.em_dropout(node_embedding)
+        # sub_tree_1:     [1, hidden_size]
+        # sub_tree_2:     [1, hidden_size]
+        # node_embedding: [1, embedding_size]
 
-        sub_tree   = torch.tanh(self.merge(torch.cat((node_embedding, sub_tree_1, sub_tree_2), 1)))       # C_t
+        sub_tree   = torch.tanh(   self.merge(  torch.cat((node_embedding, sub_tree_1, sub_tree_2), 1)))  # C_t
         sub_tree_g = torch.sigmoid(self.merge_g(torch.cat((node_embedding, sub_tree_1, sub_tree_2), 1)))  # g_t
         sub_tree = sub_tree * sub_tree_g  # t_comb
+        # sub_tree: [1, hidden_size]
         return sub_tree
