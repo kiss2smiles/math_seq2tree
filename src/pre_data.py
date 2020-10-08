@@ -178,6 +178,7 @@ def load_roth_data(filename):  # load the json data to dict(dict()) for roth dat
             v = d["lQueryVars"][0]
             if v + "=" == x[:len(v)+1]:
                 xt = x[len(v)+1:]
+
                 if len(set(xt) - set("0123456789.+-*/()")) == 0:
                     temp = d.copy()
                     temp["lEquations"] = remove_brackets(xt)
@@ -228,6 +229,7 @@ def load_roth_data(filename):  # load the json data to dict(dict()) for roth dat
                 temp["sQuestion"] = temp_y[:-1]
                 out_data[temp["iIndex"]] = temp
                 continue
+
         if x[-2:] == "=x" or x[-2:] == "=X":
             if len(set(x[:-2]) - set("0123456789.+-*/()")) == 0:
                 temp = d.copy()
@@ -316,9 +318,9 @@ def transfer_num(data):  # transfer num into "NUM"
 
         # COMMENT
         # 正则表达式语法
-        # \d*: 表示0个或者多个数字
-        # \d+: 表示1个或者多个数字
-        # \(\d+/\d+\): 匹配一个分数，eg: (1/4)
+        # \d*:               表示0个或者多个数字
+        # \d+:               表示1个或者多个数字
+        # \(\d+/\d+\):       匹配一个分数，eg: (1/4)
         # \d*\(\d+/\d+\)\d*: 匹配一个正分数或者假分数，eg: (1/4)、5(1/4)、(1/5)5
         for num in nums:
             if re.search("\d*\(\d+/\d+\)\d*", num):
@@ -750,10 +752,10 @@ def prepare_data(pairs_trained, pairs_tested, trim_min_count, generate_nums, cop
     #     input_cell: [3, 4, 5, 1, 6, 7, 8, 9, 10, 11, 12, 13, 1, 14, 10, 15, 1, 16, 17, 2, 10, 18, 19, 20, 21, 16, 22]
     #     len(input_cell): 27
     #     output_cell(output_word_idxs): [0, 9, 8]
-    #     len(output_cell): 3
+    #     len(output_cell):    3
     #     nums = pair[2]:    ['5', '0.8', '150']
-    #     num_pos =pair[3]:  [3, 12, 16]
-    #     num_stack:  []  # 多余的数字
+    #     num_pos = pair[3]:  [3, 12, 16]
+    #     num_stack:          []  # 多余的数字
     # test_pairs:
     return input_lang, output_lang, train_pairs, test_pairs
 
@@ -908,21 +910,20 @@ def prepare_train_batch(pairs_to_batch, batch_size):
         num_pos_batches.append(num_pos_batch)
         num_size_batches.append(num_size_batch)
 
-    # , 54, , 5, , [18, 25, 32], []
     # pad_idx = 0
-    # input_cell:       [54, 55, 56, 244, 2, 43, 370, 371, 331, 5, 2265, 2, 7, 22, 2150, 229, 165, 331, 1, 27, 10, 2151,
-    #                    229, 165, 331, 1, 27, 169, 2150, 846, 331, 81, 1, 27, 10, 2151, 898, 2266, 331, 22, 2151, 331,
-    #                    81, 566, 61, 10, 495, 173, 2150, 331, 17, 272, 241, 36]
-    # len(input_cell):  54
-    # output_cell:      [2, 9, 1, 8, 7]  = ['/', 'N2', '-', 'N1', 'N0']
-    # len(output_cell): 5
-    # nums:             ['200', '250', '400']
-    # num_pos:          [18, 25, 32] = [N1, N2, N3]
-    # num_stack:        []
+    # input_cell:        [54, 55, 56, 244, 2, 43, 370, 371, 331, 5, 2265, 2, 7, 22, 2150, 229, 165, 331, 1, 27, 10, 2151,
+    #                     229, 165, 331, 1, 27, 169, 2150, 846, 331, 81, 1, 27, 10, 2151, 898, 2266, 331, 22, 2151, 331,
+    #                     81, 566, 61, 10, 495, 173, 2150, 331, 17, 272, 241, 36]
+    # len(input_cell):    54
+    # output_cell:       [2, 9, 1, 8, 7]  = ['/', 'N2', '-', 'N1', 'N0']
+    # len(output_cell):   5
+    # nums:              ['200', '250', '400']
+    # num_pos:           [18, 25, 32] = [N1, N2, N3]
+    # num_stack:         []
     # input_batches:     [54, 55, 56, 244, 2, 43, 370, 371, 331, 5, 2265, 2, 7, 22, 2150, 229, 165, 331, 1, 27, 10, 2151,
     #                     229, 165, 331, 1, 27, 169, 2150, 846, 331, 81, 1, 27, 10, 2151, 898, 2266, 331, 22, 2151, 331,
     #                     81, 566, 61, 10, 495, 173, 2150, 331, 17, 272, 241, 36]
-    # input_lengths:     54
+    # input_lengths:      54
     # output_batches:    [2, 9, 1, 8, 7]  = ['/', 'N2', '-', 'N1', 'N0']
     # output_lengths:    5
     # num_batches:       3 = len(nums)

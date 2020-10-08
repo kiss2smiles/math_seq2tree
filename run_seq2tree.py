@@ -39,7 +39,7 @@ for split_fold in range(4):
 fold_pairs.append(pairs[(fold_size * 4):])
 
 best_acc_fold = []
-
+# 5折数据集
 for fold in range(5):
     pairs_tested = []
     pairs_trained = []
@@ -65,19 +65,12 @@ for fold in range(5):
     #                          'N0': 7, 'N1': 8, 'N2': 9, 'N3': 10, 'N4': 11, 'N5': 12, 'N6': 13, 'N7': 14,
     #                          'N8': 15, 'N9': 16, 'N10': 17, 'N11': 18, 'N12': 19, 'N13': 20, 'N14': 21,
     #                          'UNK': 22}
+
     # Initialize models
-    encoder = EncoderSeq(input_size=input_lang.n_words,
-                         embedding_size=embedding_size,
-                         hidden_size=hidden_size,
-                         n_layers=n_layers)
-    predict = Prediction(hidden_size=hidden_size,
-                         op_nums=output_lang.n_words - copy_nums - 1 - len(generate_nums),
-                         input_size=len(generate_nums))
-    generate = GenerateNode(hidden_size=hidden_size,
-                            op_nums=output_lang.n_words - copy_nums - 1 - len(generate_nums),
-                            embedding_size=embedding_size)
-    merge = Merge(hidden_size=hidden_size,
-                  embedding_size=embedding_size)
+    encoder  = EncoderSeq(  input_size=input_lang.n_words, embedding_size=embedding_size, hidden_size=hidden_size, n_layers=n_layers)
+    predict  = Prediction(  hidden_size=hidden_size,       op_nums=output_lang.n_words - copy_nums - 1 - len(generate_nums), input_size=len(generate_nums))
+    generate = GenerateNode(hidden_size=hidden_size,       op_nums=output_lang.n_words - copy_nums - 1 - len(generate_nums), embedding_size=embedding_size)
+    merge    = Merge(       hidden_size=hidden_size,       embedding_size=embedding_size)
     # the embedding layer is  only for generated number embeddings, operators, and paddings
 
     encoder_optimizer  = torch.optim.Adam(encoder.parameters(),  lr=learning_rate, weight_decay=weight_decay)
@@ -143,9 +136,22 @@ for fold in range(5):
             eval_total = 0
             start = time.time()
             for test_batch in test_pairs:
-                test_res = evaluate_tree(test_batch[0], test_batch[1], generate_num_ids, encoder, predict, generate,
-                                         merge, output_lang, test_batch[5], beam_size=beam_size)
-                val_ac, equ_ac, _, _ = compute_prefix_tree_result(test_res, test_batch[2], output_lang, test_batch[4], test_batch[6])
+                test_res = evaluate_tree(input_batch=test_batch[0],
+                                         input_length=test_batch[1],
+                                         generate_nums=generate_num_ids,
+                                         encoder=encoder,
+                                         predict=predict,
+                                         generate=generate,
+                                         merge=merge,
+                                         output_lang=output_lang,
+                                         num_pos=test_batch[5],
+                                         beam_size=beam_size)
+
+                val_ac, equ_ac, _, _ = compute_prefix_tree_result(test_res=test_res,
+                                                                  test_tar=test_batch[2],
+                                                                  output_lang=output_lang,
+                                                                  num_list=test_batch[4],
+                                                                  num_stack=test_batch[6])
                 if val_ac:
                     value_ac += 1
                 if equ_ac:
@@ -155,10 +161,10 @@ for fold in range(5):
             print("test_answer_acc", float(equation_ac) / eval_total, float(value_ac) / eval_total)
             print("testing time", time_since(time.time() - start))
             print("------------------------------------------------------")
-            torch.save(encoder.state_dict(), "models/encoder")
-            torch.save(predict.state_dict(), "models/predict")
+            torch.save(encoder.state_dict(),  "models/encoder")
+            torch.save(predict.state_dict(),  "models/predict")
             torch.save(generate.state_dict(), "models/generate")
-            torch.save(merge.state_dict(), "models/merge")
+            torch.save(merge.state_dict(),    "models/merge")
             if epoch == n_epochs - 1:
                 best_acc_fold.append((equation_ac, value_ac, eval_total))
 

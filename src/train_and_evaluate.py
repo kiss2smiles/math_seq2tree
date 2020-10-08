@@ -702,7 +702,7 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
     input_var = torch.LongTensor( input_batch).transpose(0, 1)
     target    = torch.LongTensor(target_batch).transpose(0, 1)
     # input_var: [seq_len, batch_size]
-    # target:    [num_size + constant_size + operator_size, batch_size]
+    # target:    [tgt_len, batch_size]
 
     # padding_hidden: [1, batch_size]
     padding_hidden = torch.FloatTensor([0.0 for _ in range(predict.hidden_size)]).unsqueeze(0)
@@ -745,9 +745,10 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
     # all_leafs = []
 
     copy_num_len = [len(_) for _ in num_pos]
-    num_size     = max(copy_num_len)
+    num_size     = max(copy_num_len)  # num_size
 
     # pad token hidden_size填充为0
+    # 从原始文本中指定索引的位置取出number embedding matrix
     # NUMBER EMBEDDING MATRIX: e(y|P) = M_{num}
     all_nums_encoder_outputs = get_all_number_encoder_outputs(
         encoder_outputs=encoder_outputs,
@@ -766,7 +767,7 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
     for t in range(max_target_length):
         # node_stacks:              [batch_size]
         # left_childs:              [batch_size]
-        # encoder_outputs:          [seq_len, batch_size, hidden_size]
+        # encoder_outputs:          [seq_len,  batch_size, hidden_size]
         # all_nums_encoder_outputs: [batch_size, num_size, hidden_size]
         # padding_hidden:           [1, hidden_size]
         # seq_mask:                 [batch_size, seq_len]

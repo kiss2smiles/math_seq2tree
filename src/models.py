@@ -308,11 +308,19 @@ class Prediction(nn.Module):
         repeat_dims = [1] * self.embedding_weight.dim()
         repeat_dims[0] = batch_size
         embedding_weight = self.embedding_weight.repeat(*repeat_dims)  # B x input_size x N
-        embedding_weight = torch.cat((embedding_weight, num_pades), dim=1)  # B x O x N
-        # embedding_weight: [batch_size, num_size, hidden_size]
 
+        # embedding_weight: CONSTANT EMBEDDING MATRIX: e(y|P) = M_{con}
+        # embedding_weight: [batch_size, constant_size, hidden_size]
+        # num_pades:        NUMBER EMBEDDING MATRIX: e(y|P) = M_{num}
+        # num_pades:        [batch_size, num_size, hidden_size]
+        embedding_weight = torch.cat((embedding_weight, num_pades), dim=1)  # B x O x N
+        # embedding_weight: [batch_size, num_size + constant_size, hidden_size]
+
+        # current_node:    goal vector q
+        # current_context: context vector c
         leaf_input = torch.cat((current_node, current_context), 2)
         # leaf_input: [batch_size, 1, 2*hidden_size]
+
         leaf_input = leaf_input.squeeze(1)
         leaf_input = self.dropout(leaf_input)
         # leaf_input: [batch_size, 2*hidden_size]
@@ -320,11 +328,12 @@ class Prediction(nn.Module):
         # p_leaf = nn.functional.softmax(self.is_leaf(leaf_input), 1)
         # max pooling the embedding_weight
         embedding_weight_ = self.dropout(embedding_weight)
-        # leaf_input: [1, batch_size, 2*hidden_size]
-        # embedding_weight_: [batch_size, num_size+constant_size, hidden_size]
-        # mask_nums:         [batch_size, num_size+constant_size]
+        # embedding_weight_: [batch_size, num_size + constant_size, hidden_size]
+
+        # leaf_input:        [batch_size, 1, 2*hidden_size]
+        # mask_nums:         [batch_size, num_size + constant_size]
         num_score = self.score(leaf_input.unsqueeze(1), embedding_weight_, mask_nums)
-        # num_score: [batch_size, num_size]
+        # num_score:         [batch_size, num_size + constant_size]
 
         # num_score = nn.functional.softmax(num_score, 1)
 
@@ -333,10 +342,15 @@ class Prediction(nn.Module):
 
         # return p_leaf, num_score, op, current_embeddings, current_attn
 
+        # num_score:         [batch_size, num_size + constant_size]
+        # op:                [batch_size, op_num]
+        # current_node:      [batch_size, 1, hidden_size]
+        # current_context:   [batch_size, 1, hidden_size]
+        # embedding_weight:  [batch_size, num_size + constant_size, hidden_size]
         return num_score, op, current_node, current_context, embedding_weight
         # current_node:      goal vector q
         # current_context:   context vector c
-        # embedding_weight:  current num embedding matrix
+        # embedding_weight:  current number + constant embedding matrix
 
 
 class GenerateNode(nn.Module):
