@@ -767,8 +767,8 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
     embeddings_stacks = [[]   for _ in range(batch_size)]
     left_childs       = [None for _ in range(batch_size)]  # debug: 如何理解这里的left_childs
     for t in range(max_target_length):
-        # node_stacks:              [batch_size]
-        # left_childs:              [batch_size]
+        # node_stacks(len):         [batch_size]
+        # left_childs(len):         [batch_size]
         # encoder_outputs:          [seq_len,  batch_size, hidden_size]
         # all_nums_encoder_outputs: [batch_size, num_size, hidden_size]
         # padding_hidden:           [1, hidden_size]
@@ -795,16 +795,16 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
         # current_num_embeddings: [batch_size, num_size + constant_size, hidden_size]
 
         # all_leafs.append(p_leaf)
-        outputs = torch.cat((op, num_score), 1)
-        # outputs: s(y|q; c; P)
+        # outputs: target分类器分数, y^
+        outputs = torch.cat((op, num_score), dim=1)
         # outputs: [batch_size, (num_size + constant_size + operator_size)]
 
         all_node_outputs.append(outputs)  # prediction
         target_t, generate_input = generate_tree_input(target=target[t].tolist(),
                                                        decoder_output=outputs,
                                                        nums_stack_batch=nums_stack_batch,
-                                                       num_start=num_start,
-                                                       unk=unk)
+                                                       num_start=num_start,  # num_start: 5
+                                                       unk=unk)              # unk: 5
         # target_t:       target token index = The token with the highest probability
         # generate_input: target token index = The token with the highest probability
         # target_t:        [batch_size]
@@ -813,12 +813,9 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
         if USE_CUDA:
             generate_input = generate_input.cuda()
 
-        # current_embeddings: goal vector q
-        # generate_input:     token embedding e(y|p)
-        # current_context:    context vector c
-        # current_embeddings: [batch_size, 1, hidden_size]
-        # generate_input:     [batch_size]
-        # current_context:    [batch_size, 1, hidden_size]
+        # current_embeddings: [batch_size, 1, hidden_size] = goal vector q
+        # generate_input:     [batch_size]                 = token embedding e(y|p)
+        # current_context:    [batch_size, 1, hidden_size] = context vector c
         left_child, right_child, node_label = generate(node_embedding=current_embeddings,
                                                        node_label=generate_input,
                                                        current_context=current_context)
@@ -841,13 +838,15 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
 
             # 生成的token为运算符
             if i < num_start:
-                # 生成新的右孩子节点
+                # 生成新的右孩子节点, r.embedding: [1, hidden_size]
                 node_stack.append(TreeNode(r))
-                # 生成新的左孩子节点
+
+                # 生成新的左孩子节点, l.embedding: [1, hidden_size]
                 node_stack.append(TreeNode(l, left_flag=True))
-                # 更新非叶子节点的Tree embedding
+
+                # 更新非叶子节点的Sub Tree embedding = 当前节点的token embedding e(y^|P)
                 o.append(TreeEmbedding(node_label[idx].unsqueeze(0), terminal=False))  # terminal=False: 非叶子节点
-                # node_label: [1, embedding_size]
+                # sub_tree embedding = node_label: [1, embedding_size]
 
             # 生成的token为运算数
             else:
@@ -855,35 +854,43 @@ def train_tree(input_batch,       input_length,      target_batch,       target_
                 current_num = current_nums_embeddings[idx, i - num_start].unsqueeze(0)
 
                 # current_num: [1, hidden_size]
-                while len(o) > 0 and o[-1].terminal:
-                    sub_stree = o.pop()
-                    op = o.pop()
-                    # 更新叶子节点的Tree embedding
-                    # op.embedding:       [1, embedding_size]
-                    # sub_tree.embedding: [1, hidden_size]
-                    # current_num:        [1, hidden_size]
+                while len(o) > 0 and o[-1].terminal:  # 此时为右孩子节点
+                    sub_stree = o.pop()  # 左孩子节点
+                    op        = o.pop()  # 父节点(操作符)
 
+                    # 更新叶子节点的Tree embedding
                     # 如果此时为右孩子节点，则通过左孩子节点和右孩子节点的subtree embedding来更新根节点的subtree embedding
+
+                    # op.embedding:          [1, embedding_size] = parent node token embedding = e(y^|P)
+                    # sub_stree.embedding:   [1,    hidden_size] = left_sub_tree_embedding     = t_l
+                    # current_num.embedding: [1,    hidden_size] = right_sub_tree_embedding    = t_r
                     current_num = merge(node_embedding=op.embedding,
                                         sub_tree_1=sub_stree.embedding,
                                         sub_tree_2=current_num)
-                # current_num: [1, hidden_size]
-                o.append(TreeEmbedding(current_num, terminal=True))  # terminal=True: 为叶子节点
 
-            # 添加新的左孩子节点
-            if len(o) > 0 and o[-1].terminal:
+                o.append(TreeEmbedding(current_num, terminal=True))  # terminal=True: 叶子节点
+                # sub_tree embedding = current_num: [1, hidden_size]
+
+            # left_childs记录所有的sub-tree embedding，并且在生成新节点时更新
+            if len(o) > 0 and o[-1].terminal:  # 最后一个节点为叶子节点(操作数)
                 left_childs.append(o[-1].embedding)
             else:
                 left_childs.append(None)
 
     # all_leafs = torch.stack(all_leafs, dim=1)  # B x S x 2
     all_node_outputs = torch.stack(all_node_outputs, dim=1)  # B x S x N
+    # all_node_outputs: [batch_size, tgt_len, num_size + constant_size + operator_size]
 
+    # target: [tgt_len, batch_size]
     target = target.transpose(0, 1).contiguous()
+    # target: [batch_size, tgt_len]
+
     if USE_CUDA:
         # all_leafs = all_leafs.cuda()
         all_node_outputs = all_node_outputs.cuda()
         target = target.cuda()
+        # all_node_outputs: [batch_size, tgt_len, num_size + constant_size + operator_size]
+        # target:           [batch_size, tgt_len]
 
     # op_target = target < num_start
     # loss_0 = masked_cross_entropy_without_logit(all_leafs, op_target.long(), target_length)

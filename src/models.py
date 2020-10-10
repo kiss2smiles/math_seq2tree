@@ -278,12 +278,14 @@ class Prediction(nn.Module):
         for l, c in zip(left_childs, current_embeddings):
             if l is None:  # left sub-tree embedding is None, generate left child node
                 # 在初始化根节点时，h_l为h_{s}^{p}，即Encoder的hidden state输出
+                # 2. Left Sub-Goal Generation
                 c = self.dropout(c)                   # h_l
                 g = torch.tanh(self.concat_l(c))      # Q_{le}
                 t = torch.sigmoid(self.concat_lg(c))  # g_l
                 current_node_temp.append(g * t)       # q_l
             else:  # left sub-tree embedding is not None, generate right child node
-                ld = self.dropout(l)                                      # ld = sub-tree left tree emb
+                # 3. Right Sub-Goal Generation
+                ld = self.dropout(l)                                      # ld = sub-tree left tree embedding
                 c = self.dropout(c)                                       # h_r
                 g = torch.tanh(self.concat_r(torch.cat((ld, c), 1)))      # Q_{re}
                 t = torch.sigmoid(self.concat_rg(torch.cat((ld, c), 1)))  # g_r
@@ -299,6 +301,8 @@ class Prediction(nn.Module):
 
         # current_embeddings: goal vector q
         # encoder_outputs:    final hidden state h_{sp}
+
+        # 1. Top-Down Goal Decomposition
         # current_embeddings: [      1, batch_size, hidden_size]
         # encoder_outputs:    [seq_len, batch_size, hidden_size]
         current_attn = self.attn(current_embeddings.transpose(0, 1), encoder_outputs, seq_mask)
@@ -306,7 +310,7 @@ class Prediction(nn.Module):
         # current_attn: [batch_size, 1, seq_len]
 
         # CONTEXT VECTOR c: summarizes relevant information of the problem at hand
-        # current_attn:    [batch_size, 1, seq_len]
+        # current_attn:    [batch_size, 1,       seq_len]
         # encoder_outputs: [batch_size, seq_len, hidden_size]
         current_context = current_attn.bmm(encoder_outputs.transpose(0, 1))  # B x 1 x N
         # current_context: context vector c
@@ -337,6 +341,7 @@ class Prediction(nn.Module):
         # leaf_input: [batch_size, 2*hidden_size]
 
         # p_leaf = nn.functional.softmax(self.is_leaf(leaf_input), 1)
+
         # max pooling the embedding_weight
         embedding_weight_ = self.dropout(embedding_weight)
         # embedding_weight_:  number embedding matrix e(y|P)
@@ -374,10 +379,10 @@ class GenerateNode(nn.Module):
         self.hidden_size    = hidden_size     # 512
 
         # op_nums: 操作符数量
-        self.embeddings = nn.Embedding(op_nums, embedding_size)
-        self.em_dropout = nn.Dropout(dropout)
-        self.generate_l = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
-        self.generate_r = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
+        self.embeddings  = nn.Embedding(op_nums, embedding_size)
+        self.em_dropout  = nn.Dropout(dropout)
+        self.generate_l  = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
+        self.generate_r  = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
         self.generate_lg = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
         self.generate_rg = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
 
@@ -388,6 +393,7 @@ class GenerateNode(nn.Module):
 
         node_label_ = self.embeddings(node_label)
         # node_label_: [batch_size, embedding_size]
+
         node_label  = self.em_dropout(node_label_)
         # node_label:  [batch_size, embedding_size]
 
@@ -398,27 +404,27 @@ class GenerateNode(nn.Module):
         # node_embedding:  [batch_size, hidden_size]
         # current_context: [batch_size, hidden_size]
 
-        # left sub-goal generation
+        # 2. Left Sub-Goal Generation
         # node_embedding:  parent goal    vector q
         # current_context: parent context vector c
         # node_label:      parent token embedding e(y^|P)
         l_child   = torch.tanh(   self.generate_l( torch.cat((node_embedding, current_context, node_label), 1)))  # C_l
+        # l_child:   [batch_size, hidden_size]
         l_child_g = torch.sigmoid(self.generate_lg(torch.cat((node_embedding, current_context, node_label), 1)))  # o_l
+        # l_child_g: [batch_size, hidden_size]
         l_child   = l_child * l_child_g  # h_l
-        # l_child:   C_l
-        # l_child_g: o_l
-        # l_child:   h_l
+        # l_child:   [batch_size, hidden_size]
 
-        # right sub-goal generation
+        # 3. Right Sub-Goal Generation
         # node_embedding:  parent goal    vector q
         # current_context: parent context vector c
         # node_label:      parent token embedding e(y^|P)
         r_child   = torch.tanh(self.generate_r(torch.cat((node_embedding, current_context, node_label), 1)))      # C_r
+        # r_child:   [batch_size, hidden_size]
         r_child_g = torch.sigmoid(self.generate_rg(torch.cat((node_embedding, current_context, node_label), 1)))  # o_r
+        # r_child_g: [batch_size, hidden_size]
         r_child   = r_child * r_child_g  # h_r
-        # r_child:   C_r
-        # r_child_g: o_r
-        # r_child:   h_r
+        # r_child:   [batch_size, hidden_size]
 
         return l_child, r_child, node_label_
 
