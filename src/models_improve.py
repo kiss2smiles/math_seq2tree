@@ -97,11 +97,11 @@ class EncoderSeq(nn.Module):
                                       embedding_dim=embedding_size,
                                       padding_idx=0)
         self.em_dropout = nn.Dropout(dropout)
-        self.gru_pade   = nn.GRU(input_size=embedding_size,
-                                 hidden_size=hidden_size,
-                                 num_layers=n_layers,
-                                 dropout=dropout,
-                                 bidirectional=True)
+        self.gru_pade = nn.GRU(input_size=embedding_size,
+                               hidden_size=hidden_size,
+                               num_layers=n_layers,
+                               dropout=dropout,
+                               bidirectional=True)
 
     def forward(self, input_seqs, input_lengths, hidden=None):
         # Note: we run this all at once (over multiple batches of multiple sequences)
@@ -324,32 +324,3 @@ class GenerateNode(nn.Module):
         # r_child:   [batch_size, hidden_size]
 
         return l_child, r_child, node_label_
-
-
-class Merge(nn.Module):
-    def __init__(self, hidden_size, embedding_size, dropout=0.5):
-        super(Merge, self).__init__()
-
-        self.embedding_size = embedding_size # 128
-        self.hidden_size    = hidden_size    # 512
-
-        self.em_dropout = nn.Dropout(dropout)
-        self.merge   = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
-        self.merge_g = nn.Linear(hidden_size * 2 + embedding_size, hidden_size)
-
-    def forward(self, node_embedding, sub_tree_1, sub_tree_2):
-        # sub_tree_1:     t_{l}
-        # sub_tree_2:     t_{r}
-        # node_embedding: e(y^|P)
-        sub_tree_1 = self.em_dropout(sub_tree_1)
-        sub_tree_2 = self.em_dropout(sub_tree_2)
-        node_embedding = self.em_dropout(node_embedding)
-        # sub_tree_1:     [1, hidden_size]
-        # sub_tree_2:     [1, hidden_size]
-        # node_embedding: [1, embedding_size]
-
-        sub_tree   = torch.tanh(   self.merge(  torch.cat((node_embedding, sub_tree_1, sub_tree_2), 1)))  # C_t
-        sub_tree_g = torch.sigmoid(self.merge_g(torch.cat((node_embedding, sub_tree_1, sub_tree_2), 1)))  # g_t
-        sub_tree = sub_tree * sub_tree_g  # t_comb
-        # sub_tree: [1, hidden_size]
-        return sub_tree
